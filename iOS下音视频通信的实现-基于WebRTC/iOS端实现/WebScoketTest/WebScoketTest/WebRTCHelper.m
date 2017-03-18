@@ -17,6 +17,7 @@
 
 //google提供的
 static NSString *const RTCSTUNServerURL = @"stun:stun.l.google.com:19302";
+static NSString *const RTCSTUNServerURL2 = @"stun:23.21.150.121";
 
 typedef enum : NSUInteger {
     //发送者
@@ -42,12 +43,10 @@ typedef enum : NSUInteger {
     NSMutableDictionary *_connectionDic;
     NSMutableArray *_connectionIdArray;
     
-    //触发当前操作的socketID
-    NSString *_currentId;
     Role _role;
     
     NSMutableArray *ICEServers;
-
+    
 }
 
 static WebRTCHelper *instance = nil;
@@ -58,7 +57,7 @@ static WebRTCHelper *instance = nil;
     dispatch_once(&onceToken, ^{
         instance = [[[self class] alloc] init];
         [instance initData];
-
+        
     });
     return instance;
 }
@@ -67,7 +66,7 @@ static WebRTCHelper *instance = nil;
 {
     _connectionDic = [NSMutableDictionary dictionary];
     _connectionIdArray = [NSMutableArray array];
-
+    
 }
 
 /**
@@ -211,7 +210,6 @@ static WebRTCHelper *instance = nil;
 {
     //给每一个点对点连接，都去创建offer
     [_connectionDic enumerateKeysAndObjectsUsingBlock:^(NSString *key, RTCPeerConnection *obj, BOOL * _Nonnull stop) {
-        _currentId = key;
         _role = RoleCaller;
         [obj createOfferWithDelegate:self constraints:[self offerOranswerConstraint]];
     }];
@@ -265,7 +263,17 @@ static WebRTCHelper *instance = nil;
     //得到ICEServer
     if (!ICEServers) {
         ICEServers = [NSMutableArray array];
-        [ICEServers addObject:[self defaultSTUNServer]];
+        
+        //        NSArray *stunServer = @[@"stun.l.google.com:19302",@"stun1.l.google.com:19302",@"stun2.l.google.com:19302",@"stun3.l.google.com:19302",@"stun3.l.google.com:19302",@"stun01.sipphone.com",@"stun.ekiga.net",@"stun.fwdnet.net",@"stun.fwdnet.net",@"stun.fwdnet.net",@"stun.ideasip.com",@"stun.iptel.org",@"stun.rixtelecom.se",@"stun.schlund.de",@"",@"stunserver.org",@"stun.softjoys.com",@"stun.voiparound.com",@"stun.voipbuster.com",@"stun.voipstunt.com",@"stun.voxgratia.org",@"stun.xten.com"];
+        
+        [ICEServers addObject:[self defaultSTUNServer:RTCSTUNServerURL ]];
+        [ICEServers addObject:[self defaultSTUNServer:RTCSTUNServerURL2]];
+        
+        //        for (NSString *url  in stunServer) {
+        //            [ICEServers addObject:[self defaultSTUNServer:url]];
+        //
+        //        }
+        
     }
     
     //用工厂来创建连接
@@ -274,9 +282,19 @@ static WebRTCHelper *instance = nil;
 }
 
 
+
 //初始化STUN Server （ICE Server）
 - (RTCICEServer *)defaultSTUNServer {
+    
+    
     NSURL *defaultSTUNServerURL = [NSURL URLWithString:RTCSTUNServerURL];
+    return [[RTCICEServer alloc] initWithURI:defaultSTUNServerURL
+                                    username:@""
+                                    password:@""];
+}
+
+- (RTCICEServer *)defaultSTUNServer:(NSString *)stunURL {
+    NSURL *defaultSTUNServerURL = [NSURL URLWithString:stunURL];
     return [[RTCICEServer alloc] initWithURI:defaultSTUNServerURL
                                     username:@""
                                     password:@""];
@@ -316,6 +334,7 @@ didCreateSessionDescription:(RTCSessionDescription *)sdp
                  error:(NSError *)error
 {
     NSLog(@"%s",__func__);
+    NSLog(@"%@",sdp.type);
     //设置本地的SDP
     [peerConnection setLocalDescriptionWithDelegate:self sessionDescription:sdp];
     
@@ -327,6 +346,9 @@ didCreateSessionDescription:(RTCSessionDescription *)sdp
 didSetSessionDescriptionWithError:(NSError *)error
 {
     NSLog(@"%s",__func__);
+    
+    NSString *currentId = [self getKeyFromConnectionDic : peerConnection];
+    
     //判断，当前连接状态为，收到了远程点发来的offer，这个是进入房间的时候，尚且没人，来人就调到这里
     if (peerConnection.signalingState == RTCSignalingHaveRemoteOffer)
     {
@@ -338,14 +360,14 @@ didSetSessionDescriptionWithError:(NSError *)error
     {
         if (_role == RoleCallee)
         {
-            NSDictionary *dic = @{@"eventName": @"__answer", @"data": @{@"sdp": @{@"type": @"answer", @"sdp": peerConnection.localDescription.description}, @"socketId": _currentId}};
+            NSDictionary *dic = @{@"eventName": @"__answer", @"data": @{@"sdp": @{@"type": @"answer", @"sdp": peerConnection.localDescription.description}, @"socketId": currentId}};
             NSData *data = [NSJSONSerialization dataWithJSONObject:dic options:NSJSONWritingPrettyPrinted error:nil];
             [_socket send:data];
         }
         //发送者,发送自己的offer
         else if(_role == RoleCaller)
         {
-            NSDictionary *dic = @{@"eventName": @"__offer", @"data": @{@"sdp": @{@"type": @"offer", @"sdp": peerConnection.localDescription.description}, @"socketId": _currentId}};
+            NSDictionary *dic = @{@"eventName": @"__offer", @"data": @{@"sdp": @{@"type": @"offer", @"sdp": peerConnection.localDescription.description}, @"socketId": currentId}};
             NSData *data = [NSJSONSerialization dataWithJSONObject:dic options:NSJSONWritingPrettyPrinted error:nil];
             [_socket send:data];
         }
@@ -354,7 +376,7 @@ didSetSessionDescriptionWithError:(NSError *)error
     {
         if (_role == RoleCallee)
         {
-            NSDictionary *dic = @{@"eventName": @"__answer", @"data": @{@"sdp": @{@"type": @"answer", @"sdp": peerConnection.localDescription.description}, @"socketId": _currentId}};
+            NSDictionary *dic = @{@"eventName": @"__answer", @"data": @{@"sdp": @{@"type": @"answer", @"sdp": peerConnection.localDescription.description}, @"socketId": currentId}};
             NSData *data = [NSJSONSerialization dataWithJSONObject:dic options:NSJSONWritingPrettyPrinted error:nil];
             [_socket send:data];
         }
@@ -374,10 +396,13 @@ didSetSessionDescriptionWithError:(NSError *)error
            addedStream:(RTCMediaStream *)stream
 {
     NSLog(@"%s",__func__);
+    
+    NSString *uid = [self getKeyFromConnectionDic : peerConnection];
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([_delegate respondsToSelector:@selector(webRTCHelper:addRemoteStream:userId:)])
         {
-            [_delegate webRTCHelper:self addRemoteStream:stream userId:_currentId];
+            //[_delegate webRTCHelper:self addRemoteStream:stream userId:_currentId];
+            [_delegate webRTCHelper:self addRemoteStream:stream userId:uid];
         }
     });
 }
@@ -417,7 +442,10 @@ didSetSessionDescriptionWithError:(NSError *)error
        gotICECandidate:(RTCICECandidate *)candidate
 {
     NSLog(@"%s",__func__);
-    NSDictionary *dic = @{@"eventName": @"__ice_candidate", @"data": @{@"label": [NSNumber numberWithInteger:candidate.sdpMLineIndex], @"candidate": candidate.sdp, @"socketId": _currentId}};
+    
+    NSString *currentId = [self getKeyFromConnectionDic : peerConnection];
+    
+    NSDictionary *dic = @{@"eventName": @"__ice_candidate", @"data": @{@"id":candidate.sdpMid,@"label": [NSNumber numberWithInteger:candidate.sdpMLineIndex], @"candidate": candidate.sdp, @"socketId": currentId}};
     NSData *data = [NSJSONSerialization dataWithJSONObject:dic options:NSJSONWritingPrettyPrinted error:nil];
     [_socket send:data];
 }
@@ -435,7 +463,7 @@ didSetSessionDescriptionWithError:(NSError *)error
     NSLog(@"收到服务器消息:%@",message);
     NSDictionary *dic = [NSJSONSerialization JSONObjectWithData:[message dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingMutableContainers error:nil];
     NSString *eventName = dic[@"eventName"];
-
+    
     //1.发送加入房间后的反馈
     if ([eventName isEqualToString:@"_peers"])
     {
@@ -448,7 +476,7 @@ didSetSessionDescriptionWithError:(NSError *)error
         
         //拿到给自己分配的ID
         _myId = dataDic[@"you"];
-      
+        
         //如果为空，则创建点对点工厂
         if (!_factory)
         {
@@ -474,10 +502,11 @@ didSetSessionDescriptionWithError:(NSError *)error
     {
         NSDictionary *dataDic = dic[@"data"];
         NSString *socketId = dataDic[@"socketId"];
+        NSString *sdpMid = dataDic[@"id"];
         NSInteger sdpMLineIndex = [dataDic[@"label"] integerValue];
         NSString *sdp = dataDic[@"candidate"];
         //生成远端网络地址对象
-        RTCICECandidate *candidate = [[RTCICECandidate alloc] initWithMid:nil index:sdpMLineIndex sdp:sdp];
+        RTCICECandidate *candidate = [[RTCICECandidate alloc] initWithMid:sdpMid index:sdpMLineIndex sdp:sdp];
         //拿到当前对应的点对点连接
         RTCPeerConnection *peerConnection = [_connectionDic objectForKey:socketId];
         //添加到点对点连接中
@@ -527,8 +556,6 @@ didSetSessionDescriptionWithError:(NSError *)error
         //设置给这个点对点连接
         [peerConnection setRemoteDescriptionWithDelegate:self sessionDescription:remoteSdp];
         
-        //把当前的ID保存下来
-        _currentId = socketId;
         //设置当前角色状态为被呼叫，（被发offer）
         _role = RoleCallee;
     }
@@ -563,4 +590,19 @@ didSetSessionDescriptionWithError:(NSError *)error
     NSLog(@"%ld:%@",(long)code, reason);
     //    [[[UIAlertView alloc] initWithTitle:@"提示" message:[NSString stringWithFormat:@"%ld:%@",(long)code, reason] delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil, nil] show];
 }
+
+- (NSString *)getKeyFromConnectionDic:(RTCPeerConnection *)peerConnection
+{
+    //find socketid by pc
+    static NSString *socketId;
+    [_connectionDic enumerateKeysAndObjectsUsingBlock:^(NSString *key, RTCPeerConnection *obj, BOOL * _Nonnull stop) {
+        if ([obj isEqual:peerConnection])
+        {
+            NSLog(@"%@",key);
+            socketId = key;
+        }
+    }];
+    return socketId;
+}
+
 @end
